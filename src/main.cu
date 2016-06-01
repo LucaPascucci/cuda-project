@@ -3,6 +3,9 @@
 
 using namespace std;
 
+#define LOCAL_N 1024
+#define RADIUS 3
+#define BLOCK_SIZE 16
 #define N (2048*2048)
 #define THREAD_PER_BLOCK 512
 
@@ -23,9 +26,31 @@ __global__ void vectorAddThreads(int *a, int *b, int *c) {
 }
 
 __global__ void vectorAddBlocksThreads(int *a, int *b, int *c){ //blockDim corrisponde alla grandezza del blocco
-	int index = threadIdx.x + blockIdx.x * blockDim.x; //serve per ricavare l'effettivo in incide del'array
+	int index = threadIdx.x + blockIdx.x * blockDim.x; //serve per ricavare l'effettivo in indice del'array
 	//es 5(indice trhead) + 2(indice blocco) * 8 (Dim di ogni blocco) = 21 indice nell'array)
 	c[index] = a[index] + b[index];
+}
+
+__global__ void stencil_1d(int *in, int *out) {
+	__shared__ int temp[BLOCK_SIZE + 2 * RADIUS]; //dati condivisi e visibili solo tra i threads in uno stesso block
+	int gindex = threadIdx.x + blockIdx.x * blockDim.x; //serve per ricavare l'effettivo in indice del'array
+	int lindex = threadIdx.x + RADIUS; //indice del vettore temp dove scrivere i dati
+	// Read input elements into shared memory
+	temp[lindex] = in[gindex];
+	if (threadIdx.x < RADIUS) {
+		temp[lindex - RADIUS] = in[gindex - RADIUS];
+		temp[lindex + BLOCK_SIZE] = in[gindex + BLOCK_SIZE];
+	}
+	// Synchronize (ensure all the data is available) sincronizza tutti i thread di un blocco
+	//Usato per prevenire RAW,WAR,WAW hazards
+	__syncthreads(); //Come fosse una barriera che tutti i thread devono raggiungere assieme
+	// Apply the stencil
+	int result = 0;
+	for (int offset = -RADIUS ; offset <= RADIUS ; offset++)
+		result += temp[lindex + offset];
+
+	// Store the result
+	out[gindex] = result;
 }
 
 void random_ints (int* a, int n){
@@ -185,6 +210,36 @@ void simpleAdd(){
 	printf("La somma fa: %d\n",c);
 }
 
+void stencil(){
+	int *in, *out;			// host copies of in, out
+	int *d_in, *d_out;		// device copies of in, out
+	int size = (LOCAL_N + 2*RADIUS) * sizeof(int); //dimensioni degli array
+
+	// Alloc space for host copies and setup values
+	in = (int *)malloc(size);
+	random_ints(in, size);
+	out = (int *)malloc(size);
+
+	// Alloc space for device copies
+	cudaMalloc((void **)&d_in, size);
+	cudaMalloc((void **)&d_out, size);
+
+	// Copy to device
+	cudaMemcpy(d_in, in, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_out, out, size, cudaMemcpyHostToDevice);
+
+	// Launch stencil_1d() kernel on GPU
+	stencil_1d<<<LOCAL_N/BLOCK_SIZE,BLOCK_SIZE>>>(d_in + RADIUS, d_out + RADIUS);
+	// Copy result back to host
+	cudaMemcpy(out, d_out, size, cudaMemcpyDeviceToHost);
+
+	// Cleanup
+	free(in);
+	free(out);
+	cudaFree(d_in);
+	cudaFree(d_out);
+}
+
 int main(void) {
 
 	int nDevices;
@@ -211,7 +266,6 @@ int main(void) {
 	mykernel<<<1,1>>>();
 	printf("Hello world!\n");
 	t2 = clock();
-
 	diff = ((float)(t2 - t1) / 1000000.0F ) * 1000;
 	printf("Tempo %f\n",diff);
 
@@ -238,6 +292,12 @@ int main(void) {
 	t2 = clock();
 	diff = ((float)(t2 - t1) / 1000000.0F ) * 1000;
 	printf("Tempo vectorAddBlocksThreads: %f\n",diff);
+
+	t1 = clock();
+	stencil();
+	t2 = clock();
+	diff = ((float)(t2 - t1) / 1000000.0F ) * 1000;
+	printf("Tempo stencil: %f\n",diff);
 
 	return 0;
 }

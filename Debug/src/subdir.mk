@@ -4,16 +4,13 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 CU_SRCS += \
-../src/main.cu \
-../src/stencil.cu 
+../src/main.cu 
 
 OBJS += \
-./src/main.o \
-./src/stencil.o 
+./src/main.o 
 
 CU_DEPS += \
-./src/main.d \
-./src/stencil.d 
+./src/main.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
